@@ -1,26 +1,13 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.10;
 
-// Importing ERC20 interface from OpenZeppelin
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-
-// Importing Uniswap V2 Router interface
 import "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
-
-// Importing Uniswap V3 interfaces
 import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
 import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
-
-// Importing TransferHelper library from Uniswap V3
 import "@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol";
-
-// Importing SushiSwap Router interface
 // import "@sushiswap/sdk/contracts/interfaces/IUniswapV2Router02.sol";
-
-// Importing ReentrancyGuard from OpenZeppelin
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
-
-// Importing Aave V3 interfaces
 import "@aave/core-v3/contracts/flashloan/interfaces/IFlashLoanReceiver.sol";
 import "@aave/core-v3/contracts/interfaces/IPool.sol";
 import "@aave/core-v3/contracts/interfaces/IPoolAddressesProvider.sol";
@@ -38,6 +25,7 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
     IPool public lendingPool;
     I1inchRouter public oneInchRouter;
     IUniswapV2Router02 public sushiSwapRouter;
+    IUniswapV2Router02 public uniswapV2Router;
     ISwapRouter public uniswapV3Router;
 
     address public owner;
@@ -87,19 +75,16 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         address _lendingPoolAddressesProvider,
         address _oneInchRouter,
         address _sushiSwapRouter,
+        address _uniswapV2Router,
         address _uniswapV3Router
     ) {
         require(
-            _lendingPoolAddressesProvider != address(0),
-            "LendingPoolAddressesProvider address cannot be zero."
-        );
-        require(
-            _oneInchRouter != address(0),
-            "OneInchRouter address cannot be zero."
-        );
-        require(
-            _sushiSwapRouter != address(0),
-            "SushiSwapRouter address cannot be zero."
+            _lendingPoolAddressesProvider != address(0) &&
+                _oneInchRouter != address(0) &&
+                _uniswapV2Router != address(0) &&
+                _sushiSwapRouter != address(0) &&
+                _uniswapV3Router != address(0),
+            "One or more router addresses cannot be zero."
         );
 
         lendingPool = IPool(
@@ -107,6 +92,7 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         );
         oneInchRouter = I1inchRouter(_oneInchRouter);
         sushiSwapRouter = IUniswapV2Router02(_sushiSwapRouter);
+        uniswapV2Router = IUniswapV2Router02(_uniswapV2Router);
         uniswapV3Router = ISwapRouter(_uniswapV3Router);
         owner = msg.sender;
 
@@ -250,10 +236,8 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         amountOut0 = executeSwap(token1, token0, amountOut0, sourceHigh);
         amountOut1 = executeSwap(token0, token1, amountOut1, sourceHigh);
 
-        uint256 profit = max(
-            amountOut0 + amountOut1 - amountIn0 - amountIn1,
-            0
-        );
+        uint256 profit = (amountOut0 + amountOut1 - amountIn0 - amountIn1);
+
         return profit;
     }
 
@@ -293,7 +277,7 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         address tokenOut,
         uint256 amountIn
     ) internal returns (uint256) {
-        TransferHelper.safeApprove(tokenIn, address(sushiSwapRouter), amountIn);
+        TransferHelper.safeApprove(tokenIn, address(uniswapV2Router), amountIn);
 
         address[] memory path = new address[](2);
         path[0] = tokenIn;
@@ -378,36 +362,34 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         address tokenOut,
         uint256 amountIn
     ) internal returns (uint256) {
+        // Transfer the specified amount of tokens from the sender to this contract
+        TransferHelper.safeTransferFrom(
+            tokenIn,
+            msg.sender,
+            address(this),
+            amountIn
+        );
+
+        // Approve the router to spend the tokens
+        TransferHelper.safeApprove(tokenIn, address(oneInchRouter), amountIn);
+
+        // Prepare the data for the 1inch swap
         address[] memory tokens = new address[](2);
         tokens[0] = tokenIn;
         tokens[1] = tokenOut;
 
-        // Assuming the existence of a correct way to prepare the data for 1inch swap
-        // The data preparation step is crucial for the swap to succeed
-        // This might involve encoding the swap parameters correctly
         bytes memory data = abi.encodeWithSelector(
             oneInchRouter.swap.selector,
             tokens,
             amountIn,
             0,
             address(this),
-            block.timestamp + 300
+            block.timestamp
         );
 
-        // It's important to ensure that the swap function call is correctly awaited and executed
-        // The swap function might return multiple values, ensure to capture the amountOut correctly
-        // Assuming oneInchRouter.swap returns the amount out as the first parameter
-        // uint256 amountOut = oneInchRouter.swap(
-        //     tokens,
-        //     amountIn,
-        //     // minAmountOut, // Assuming this is a required parameter for minimum amount out
-        //     //  path, // Assuming this is the correct way to specify the swap path or additional data
-        //     // address(this),
-        //     // block.timestamp + 300
-        // );
-
-        // emit SwapExecuted("1inch", tokenIn, tokenOut, amountIn, amountOut);
-        // return amountOut;
+        // Execute the swap
+        uint256 amountOut = oneInchRouter.swap(tokens, amountIn, 0, data);
+        return amountOut;
     }
 
     function ADDRESSES_PROVIDER()
@@ -422,11 +404,11 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         return lendingPool;
     }
 
-    function max(uint256 a, uint256 b) internal pure returns (uint256) {
-        return a >= b ? a : b;
-    }
+    // function max(uint256 a, uint256 b) internal pure returns (uint256) {
+    //     return a >= b ? a : b;
+    // }
 
-    function min(uint256 a, uint256 b) internal pure returns (uint256) {
-        return a < b ? a : b;
-    }
+    // function min(uint256 a, uint256 b) internal pure returns (uint256) {
+    //     return a < b ? a : b;
+    // }
 }
