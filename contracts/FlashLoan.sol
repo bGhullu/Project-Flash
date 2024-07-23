@@ -229,14 +229,33 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         uint256 amountIn1,
         string memory sourceLow,
         string memory sourceHigh
-    ) internal returns (uint256) {
+    ) internal returns (uint256 profit) {
         uint256 amountOut0 = executeSwap(token0, token1, amountIn0, sourceLow);
         uint256 amountOut1 = executeSwap(token1, token0, amountIn1, sourceLow);
 
-        amountOut0 = executeSwap(token1, token0, amountOut0, sourceHigh);
-        amountOut1 = executeSwap(token0, token1, amountOut1, sourceHigh);
+        // amountOut0 = executeSwap(token1, token0, amountOut0, sourceHigh);
+        // amountOut1 = executeSwap(token0, token1, amountOut1, sourceHigh);
 
-        uint256 profit = (amountOut0 + amountOut1 - amountIn0 - amountIn1);
+        uint256 amountOutHigh0 = executeSwap(
+            token1,
+            token0,
+            amountOut0,
+            sourceHigh
+        );
+        uint256 amountOutHigh1 = executeSwap(
+            token0,
+            token1,
+            amountOut1,
+            sourceHigh
+        );
+
+        // uint256 profit = (amountOut0 + amountOut1 - amountIn0 - amountIn1);
+        uint256 totalAmountOut = amountOutHigh0 + amountOutHigh1;
+        uint256 totalAmountIn = amountIn0 + amountIn1;
+
+        profit = totalAmountOut > totalAmountIn
+            ? totalAmountOut - totalAmountIn
+            : 0;
 
         return profit;
     }
@@ -246,30 +265,31 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         address tokenOut,
         uint256 amountIn,
         string memory source
-    ) internal returns (uint256) {
+    ) internal returns (uint256 amountOut) {
         if (
             keccak256(abi.encodePacked(source)) ==
             keccak256(abi.encodePacked("uniswapV2"))
         ) {
-            return swapUniswapV2(tokenIn, tokenOut, amountIn);
+            amountOut = swapUniswapV2(tokenIn, tokenOut, amountIn);
         } else if (
             keccak256(abi.encodePacked(source)) ==
             keccak256(abi.encodePacked("uniswapV3"))
         ) {
-            return swapUniswapV3(tokenIn, tokenOut, amountIn);
+            amountOut = swapUniswapV3(tokenIn, tokenOut, amountIn);
         } else if (
             keccak256(abi.encodePacked(source)) ==
             keccak256(abi.encodePacked("sushiswap"))
         ) {
-            return swapSushiSwap(tokenIn, tokenOut, amountIn);
+            amountOut = swapSushiSwap(tokenIn, tokenOut, amountIn);
         } else if (
             keccak256(abi.encodePacked(source)) ==
             keccak256(abi.encodePacked("swap1inch"))
         ) {
-            return swap1inch(tokenIn, tokenOut, amountIn);
+            amountOut = swap1inch(tokenIn, tokenOut, amountIn);
         } else {
             revert UnsupportedSwapSource();
         }
+        return amountOut;
     }
 
     function swapUniswapV2(
