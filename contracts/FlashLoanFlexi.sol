@@ -37,7 +37,7 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         address uniswapV2Router,
         address indexed uniswapV3Pool,
         address sushiswapRouter,
-        address oneInchRouter,
+        // address oneInchRouter,
         address indexed owner
     );
 
@@ -69,21 +69,22 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
     }
 
     address private constant IPOOL_ADDRESS_PROVIDER =
-        0xB53C1a33016B2DC2fF3653530bfF1848a515c8c5;
+        0xa97684ead0e402dC232d5A977953DF7ECBaB3CDb;
     address private constant UNISWAP_V2_ROUTER =
-        0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
+        0xf1D7CC64Fb4452F05c498126312eBE29f30Fbcf9;
     address private constant UNISWAP_V3_POOL =
-        0xE592427A0AEce92De3Edee1F18E0157C05861564;
+        0x1F98431c8aD98523631AE4a59f267346ea31F984;
     address private constant SUSHISWAP_ROUTER =
-        0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506;
-    address private constant ONEINCH_ROUTER =
-        0x11111112542D85B3EF69AE05771c2dCCff4fAa26;
+        0xc35DADB65012eC5796536bD9864eD8773aBc74C4;
+
+    // address private constant ONEINCH_ROUTER =
+    //     0x11111112542D85B3EF69AE05771c2dCCff4fAa26;
 
     constructor() {
         lendingPool = IPool(
             IPoolAddressesProvider(IPOOL_ADDRESS_PROVIDER).getPool()
         );
-        oneInchRouter = I1inchRouter(ONEINCH_ROUTER);
+        // oneInchRouter = I1inchRouter(ONEINCH_ROUTER);
         sushiSwapRouter = IUniswapV2Router02(SUSHISWAP_ROUTER);
         uniswapV2Router = IUniswapV2Router02(UNISWAP_V2_ROUTER);
         uniswapV3Router = ISwapRouter(UNISWAP_V3_POOL);
@@ -94,7 +95,7 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
             UNISWAP_V2_ROUTER,
             UNISWAP_V3_POOL,
             SUSHISWAP_ROUTER,
-            ONEINCH_ROUTER,
+            // ONEINCH_ROUTER,
             owner
         );
     }
@@ -250,12 +251,14 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
             keccak256(abi.encodePacked("sushiswap"))
         ) {
             amountOut = swapSushiSwap(tokenIn, tokenOut, amountIn);
-        } else if (
-            keccak256(abi.encodePacked(source)) ==
-            keccak256(abi.encodePacked("swap1inch"))
-        ) {
-            amountOut = swap1inch(tokenIn, tokenOut, amountIn);
-        } else {
+        }
+        // } else if (
+        //     keccak256(abi.encodePacked(source)) ==
+        //     keccak256(abi.encodePacked("swap1inch"))
+        // ) {
+        //     amountOut = swap1inch(tokenIn, tokenOut, amountIn);
+        // }
+        else {
             revert UnsupportedSwapSource();
         }
         return amountOut;
@@ -344,25 +347,25 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         return amountsOut[1];
     }
 
-    function swap1inch(
-        address tokenIn,
-        address tokenOut,
-        uint256 amountIn
-    ) internal returns (uint256) {
-        address[] memory tokens = new address[](2);
-        tokens[0] = tokenIn;
-        tokens[1] = tokenOut;
+    // function swap1inch(
+    //     address tokenIn,
+    //     address tokenOut,
+    //     uint256 amountIn
+    // ) internal returns (uint256) {
+    //     address[] memory tokens = new address[](2);
+    //     tokens[0] = tokenIn;
+    //     tokens[1] = tokenOut;
 
-        uint256 amountOut = oneInchRouter.swap(
-            tokens,
-            amountIn,
-            0, // Set amountOutMin to 0 for simplicity; you might want to improve this
-            bytes("") // Empty bytes for the 1inch data parameter
-        );
+    //     uint256 amountOut = oneInchRouter.swap(
+    //         tokens,
+    //         amountIn,
+    //         0, // Set amountOutMin to 0 for simplicity; you might want to improve this
+    //         bytes("") // Empty bytes for the 1inch data parameter
+    //     );
 
-        emit SwapExecuted("1inch", tokenIn, tokenOut, amountIn, amountOut);
-        return amountOut;
-    }
+    //     emit SwapExecuted("1inch", tokenIn, tokenOut, amountIn, amountOut);
+    //     return amountOut;
+    // }
 
     function ADDRESSES_PROVIDER()
         external
