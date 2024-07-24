@@ -4,6 +4,7 @@ pragma solidity ^0.8.10;
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@uniswap/v2-periphery/contracts/interfaces/IUniswapV2Router02.sol";
 import "@uniswap/v3-periphery/contracts/interfaces/ISwapRouter.sol";
+import "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import "@uniswap/v3-periphery/contracts/libraries/TransferHelper.sol";
 import "@openzeppelin/contracts/security/ReentrancyGuard.sol";
 import "@aave/core-v3/contracts/flashloan/interfaces/IFlashLoanReceiver.sol";
@@ -32,17 +33,18 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
     event ArbitrageStarted();
     event ArbitrageStopped();
     event ContractDeployed(
-        address indexed lendingPoolAddressesProvider,
-        address indexed oneInchRouter,
-        address indexed sushiSwapRouter
+        address indexed ipoolAddressProvider,
+        address uniswapV2Router,
+        address indexed uniswapV3Pool,
+        address sushiswapRouter,
+        address oneInchRouter,
+        address indexed owner
     );
+
     event ArbitrageTriggered(
-        address token0,
-        address token1,
-        uint256 amountIn0,
-        uint256 amountIn1,
-        string sourceLow,
-        string sourceHigh
+        address[] tokens,
+        uint256[] amountsIn,
+        string[] sources
     );
     event SwapExecuted(
         string source,
@@ -61,43 +63,39 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
     error FlashLoanFailed();
 
     struct ArbitrageParams {
-        address token0;
-        address token1;
-        uint256 amountIn0;
-        uint256 amountIn1;
-        string sourceLow;
-        string sourceHigh;
+        address[] tokens;
+        uint256[] amountsIn;
+        string[] sources;
     }
 
-    constructor(
-        address _lendingPoolAddressesProvider,
-        address _oneInchRouter,
-        address _sushiSwapRouter,
-        address _uniswapV2Router,
-        address _uniswapV3Router
-    ) {
-        require(
-            _lendingPoolAddressesProvider != address(0) &&
-                _oneInchRouter != address(0) &&
-                _uniswapV2Router != address(0) &&
-                _sushiSwapRouter != address(0) &&
-                _uniswapV3Router != address(0),
-            "One or more router addresses cannot be zero."
-        );
+    address private constant IPOOL_ADDRESS_PROVIDER =
+        0xB53C1a33016B2DC2fF3653530bfF1848a515c8c5;
+    address private constant UNISWAP_V2_ROUTER =
+        0x7a250d5630B4cF539739dF2C5dAcb4c659F2488D;
+    address private constant UNISWAP_V3_POOL =
+        0xE592427A0AEce92De3Edee1F18E0157C05861564;
+    address private constant SUSHISWAP_ROUTER =
+        0x1b02dA8Cb0d097eB8D57A175b88c7D8b47997506;
+    address private constant ONEINCH_ROUTER =
+        0x11111112542D85B3EF69AE05771c2dCCff4fAa26;
 
+    constructor() {
         lendingPool = IPool(
-            IPoolAddressesProvider(_lendingPoolAddressesProvider).getPool()
+            IPoolAddressesProvider(IPOOL_ADDRESS_PROVIDER).getPool()
         );
-        oneInchRouter = I1inchRouter(_oneInchRouter);
-        sushiSwapRouter = IUniswapV2Router02(_sushiSwapRouter);
-        uniswapV2Router = IUniswapV2Router02(_uniswapV2Router);
-        uniswapV3Router = ISwapRouter(_uniswapV3Router);
+        oneInchRouter = I1inchRouter(ONEINCH_ROUTER);
+        sushiSwapRouter = IUniswapV2Router02(SUSHISWAP_ROUTER);
+        uniswapV2Router = IUniswapV2Router02(UNISWAP_V2_ROUTER);
+        uniswapV3Router = ISwapRouter(UNISWAP_V3_POOL);
         owner = msg.sender;
 
         emit ContractDeployed(
-            _lendingPoolAddressesProvider,
-            _oneInchRouter,
-            _sushiSwapRouter
+            IPOOL_ADDRESS_PROVIDER,
+            UNISWAP_V2_ROUTER,
+            UNISWAP_V3_POOL,
+            SUSHISWAP_ROUTER,
+            ONEINCH_ROUTER,
+            owner
         );
     }
 
@@ -138,15 +136,12 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         );
 
         uint256 amountOut = executeArbitrage(
-            arbParams.token0,
-            arbParams.token1,
-            arbParams.amountIn0,
-            arbParams.amountIn1,
-            arbParams.sourceLow,
-            arbParams.sourceHigh
+            arbParams.tokens,
+            arbParams.amountsIn,
+            arbParams.sources
         );
 
-        uint256 totalDebt = amounts[0] + premiums[0] + amounts[1] + premiums[1];
+        uint256 totalDebt = amounts[0] + premiums[0];
         if (amountOut < totalDebt) {
             revert InsufficientProfit();
         }
@@ -160,40 +155,35 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         uint256[] calldata premiums
     ) internal returns (bool) {
         uint256 totalDebt0 = amounts[0] + premiums[0];
-        uint256 totalDebt1 = amounts[1] + premiums[1];
 
         IERC20(assets[0]).approve(address(lendingPool), totalDebt0);
-        IERC20(assets[1]).approve(address(lendingPool), totalDebt1);
 
         emit OperationExecuted(true);
         return true;
     }
 
     function initiateFlashLoanArbitrage(
-        address token0,
-        address token1,
-        uint256 amountIn0,
-        uint256 amountIn1,
-        string memory sourceLow,
-        string memory sourceHigh
+        address[] memory tokens,
+        uint256[] memory amountsIn,
+        string[] memory sources
     ) public onlyWhenActive nonReentrant {
-        address[] memory assets = new address[](2);
-        assets[0] = token0;
-        assets[1] = token1;
-        uint256[] memory amounts = new uint256[](2);
-        amounts[0] = amountIn0;
-        amounts[1] = amountIn1;
-        uint256[] memory modes = new uint256[](2);
+        require(
+            tokens.length == amountsIn.length &&
+                tokens.length == sources.length + 1,
+            "Mismatched input lengths"
+        );
+
+        address[] memory assets = new address[](1);
+        assets[0] = tokens[0];
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = amountsIn[0];
+        uint256[] memory modes = new uint256[](1);
         modes[0] = 0; // No debt mode for token0
-        modes[1] = 0; // No debt mode for token1
 
         ArbitrageParams memory arbParams = ArbitrageParams(
-            token0,
-            token1,
-            amountIn0,
-            amountIn1,
-            sourceLow,
-            sourceHigh
+            tokens,
+            amountsIn,
+            sources
         );
 
         try
@@ -207,47 +197,32 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
                 0
             )
         {
-            emit ArbitrageTriggered(
-                token0,
-                token1,
-                amountIn0,
-                amountIn1,
-                sourceLow,
-                sourceHigh
-            );
+            emit ArbitrageTriggered(tokens, amountsIn, sources);
         } catch {
             revert FlashLoanFailed();
         }
     }
 
     function executeArbitrage(
-        address token0,
-        address token1,
-        uint256 amountIn0,
-        uint256 amountIn1,
-        string memory sourceLow,
-        string memory sourceHigh
-    ) internal returns (uint256) {
-        uint256 amountOut0 = executeSwap(token0, token1, amountIn0, sourceLow);
-        uint256 amountOut1 = executeSwap(token1, token0, amountIn1, sourceLow);
+        address[] memory tokens,
+        uint256[] memory amountsIn,
+        string[] memory sources
+    ) internal returns (uint256 profit) {
+        uint256[] memory amountsOut = new uint256[](tokens.length - 1);
 
-        uint256 amountOutHigh0 = executeSwap(
-            token1,
-            token0,
-            amountOut0,
-            sourceHigh
-        );
-        uint256 amountOutHigh1 = executeSwap(
-            token0,
-            token1,
-            amountOut1,
-            sourceHigh
-        );
+        for (uint256 i = 0; i < tokens.length - 1; i++) {
+            amountsOut[i] = executeSwap(
+                tokens[i],
+                tokens[i + 1],
+                amountsIn[i],
+                sources[i]
+            );
+        }
 
-        uint256 totalAmountOut = amountOutHigh0 + amountOutHigh1;
-        uint256 totalAmountIn = amountIn0 + amountIn1;
+        uint256 totalAmountOut = amountsOut[amountsOut.length - 1];
+        uint256 totalAmountIn = amountsIn[0];
 
-        uint256 profit = totalAmountOut > totalAmountIn
+        profit = totalAmountOut > totalAmountIn
             ? totalAmountOut - totalAmountIn
             : 0;
 
@@ -326,7 +301,7 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
             .ExactInputSingleParams({
                 tokenIn: tokenIn,
                 tokenOut: tokenOut,
-                fee: 3000,
+                fee: 3000, // Fee tier for Uniswap V3
                 recipient: address(this),
                 deadline: block.timestamp,
                 amountIn: amountIn,
@@ -374,22 +349,17 @@ contract AdvancedArbitrageBot is ReentrancyGuard, IFlashLoanReceiver {
         address tokenOut,
         uint256 amountIn
     ) internal returns (uint256) {
-        TransferHelper.safeApprove(tokenIn, address(oneInchRouter), amountIn);
-
         address[] memory tokens = new address[](2);
         tokens[0] = tokenIn;
         tokens[1] = tokenOut;
 
-        bytes memory data = abi.encodeWithSelector(
-            oneInchRouter.swap.selector,
+        uint256 amountOut = oneInchRouter.swap(
             tokens,
             amountIn,
-            0,
-            address(this),
-            block.timestamp
+            0, // Set amountOutMin to 0 for simplicity; you might want to improve this
+            bytes("") // Empty bytes for the 1inch data parameter
         );
 
-        uint256 amountOut = oneInchRouter.swap(tokens, amountIn, 0, data);
         emit SwapExecuted("1inch", tokenIn, tokenOut, amountIn, amountOut);
         return amountOut;
     }
