@@ -16,10 +16,7 @@ node_modules
 # Hardhat Ignition default folder for deployments against a local node
 ignition/deployments/chain-31337
 notes
-advanced.js
-/ultra
-/ultra_alt
-/ai
-/refactor_ai
-/refactor_js
+/javascript
+/python
+
 /4
