@@ -8,9 +8,7 @@ import "@aave/protocol-v2/contracts/protocol/lendingpool/interfaces/ILendingPool
 import "@aave/protocol-v2/contracts/protocol/lendingpool/interfaces/ILendingPool.sol";
 
 // Interface imports
-import "./IUniswapV2Router.sol";
-import "./ICowSwap.sol";
-import "./ICommonBridge.sol";
+import "../interfaces/advancedFlashLoan.sol";
 
 contract Arbitrage is Ownable, IFlashLoanReceiver {
     // Router addresses
