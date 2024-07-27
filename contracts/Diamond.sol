@@ -8,7 +8,12 @@ import {IERC173} from "./IERC173.sol";
 import {DiamondStorageLib} from "./DiamondStorageLib.sol";
 
 contract Diamond {
-    constructor(address _contractOwner, address _diamondCutFacet) {
+    constructor(
+        address _contractOwner,
+        address _diamondCutFacet,
+        address _diamondLoupeFacet,
+        address _ownershipFacet
+    ) {
         DiamondStorageLib.DiamondStorage storage ds = DiamondStorageLib
             .diamondStorage();
 
@@ -20,11 +25,21 @@ contract Diamond {
         ds.supportedInterfaces[type(IERC165).interfaceId] = true;
         ds.supportedInterfaces[type(IERC173).interfaceId] = true;
 
-        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](1);
+        IDiamondCut.FacetCut[] memory cut = new IDiamondCut.FacetCut[](3);
         cut[0] = IDiamondCut.FacetCut({
             facetAddress: _diamondCutFacet,
             action: IDiamondCut.FacetCutAction.Add,
             functionSelectors: generateSelectors(_diamondCutFacet)
+        });
+        cut[1] = IDiamondCut.FacetCut({
+            facetAddress: _diamondLoupeFacet,
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: generateSelectors(_diamondLoupeFacet)
+        });
+        cut[2] = IDiamondCut.FacetCut({
+            facetAddress: _ownershipFacet,
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: generateSelectors(_ownershipFacet)
         });
 
         // execute the diamond cut

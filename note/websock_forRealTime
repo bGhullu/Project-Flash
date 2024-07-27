@@ -1,0 +1,32 @@
+Use WebSockets for real-time data feeds instead of polling APIs.
+
+const WebSocket = require('ws');
+
+const ws = new WebSocket('wss://api.yourexchange.com/stream');
+
+ws.on('message', function incoming(data) {
+    console.log(`Received data: ${data}`);
+});
+
+Automation and Alerts
+Implement automation scripts and alerts for critical events.
+const nodemailer = require('nodemailer');
+
+const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+        user: process.env.EMAIL,
+        pass: process.env.EMAIL_PASSWORD
+    }
+});
+
+const sendAlert = async (message) => {
+    await transporter.sendMail({
+        from: process.env.EMAIL,
+        to: process.env.ALERT_EMAIL,
+        subject: 'Arbitrage Bot Alert',
+        text: message
+    });
+};
+
+module.exports = { sendAlert };
