@@ -3,13 +3,11 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@aave/protocol-v2/contracts/flashloan/interfaces/IFlashLoanReceiver.sol";
-import "@aave/protocol-v2/contracts/interfaces/ILendingPoolAddressesProvider.sol";
 import "@aave/protocol-v2/contracts/interfaces/ILendingPool.sol";
 import "../interfaces/I1inchAggregationRouterV4.sol";
 import "../interfaces/IBalancerVault.sol";
 import "../interfaces/IPancakeRouter.sol";
 import "../interfaces/ICowSwap.sol";
-import "../interfaces/IAaveV3LendingPool.sol";
 import "../interfaces/IWormholeBridge.sol";
 import "../interfaces/ISynapseBridge.sol";
 import "../interfaces/IStargateRouter.sol";
@@ -20,12 +18,9 @@ import "./DiamondStorageLib.sol";
 contract ArbitrageFacet is IFlashLoanReceiver {
     using DiamondStorageLib for DiamondStorageLib.DiamondStorage;
 
-    IAaveV3LendingPool public lendingPool;
-
     function initializeArbitrage(address _lendingPool) external {
         DiamondStorageLib.enforceIsContractOwner();
-
-        lendingPool = IAaveV3LendingPool(_lendingPool);
+        DiamondStorageLib.setLendingPool(_lendingPool);
     }
 
     function setDexAddress(
@@ -54,6 +49,7 @@ contract ArbitrageFacet is IFlashLoanReceiver {
     ) external {
         DiamondStorageLib.enforceIsContractOwner();
 
+        address lendingPool = DiamondStorageLib.getLendingPool();
         uint256[] memory modes = new uint256[](tokens.length);
         for (uint256 i = 0; i < tokens.length; i++) {
             modes[i] = 0;
@@ -66,7 +62,7 @@ contract ArbitrageFacet is IFlashLoanReceiver {
             bridgeOperations
         );
 
-        lendingPool.flashLoan(
+        ILendingPool(lendingPool).flashLoan(
             address(this),
             tokens,
             amounts,
@@ -85,7 +81,7 @@ contract ArbitrageFacet is IFlashLoanReceiver {
         bytes calldata params
     ) external override returns (bool) {
         require(
-            msg.sender == address(lendingPool),
+            msg.sender == address(DiamondStorageLib.getLendingPool()),
             "Caller must be LendingPool"
         );
 
@@ -108,7 +104,7 @@ contract ArbitrageFacet is IFlashLoanReceiver {
 
         for (uint256 i = 0; i < assets.length; i++) {
             uint256 amountOwing = amounts[i] + premiums[i];
-            IERC20(assets[i]).approve(address(lendingPool), amountOwing);
+            IERC20(assets[i]).approve(msg.sender, amountOwing);
         }
 
         return true;
