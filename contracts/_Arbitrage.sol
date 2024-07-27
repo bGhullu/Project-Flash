@@ -8,41 +8,33 @@ import "@aave/protocol-v2/contracts/interfaces/ILendingPoolAddressesProvider.sol
 import "@aave/protocol-v2/contracts/interfaces/ILendingPool.sol";
 
 // Interface imports
-import "../interfaces/I1inchAggregationRouterV4.sol";
-import "../interfaces/IBalancerVault.sol";
-import "../interfaces/IPancakeRouter.sol";
-import "../interfaces/ICowSwap.sol";
-import "../interfaces/IAaveV3LendingPool.sol";
-import "../interfaces/IWormholeBridge.sol";
-import "../interfaces/ISynapseBridge.sol";
-import "../interfaces/IStargateRouter.sol";
-import "../interfaces/IDeBridgeGate.sol";
-import "../interfaces/IBungeeBridge.sol";
+import "../interfaces/advancedFlashLoan.sol";
 
 contract Arbitrage is Ownable, IFlashLoanReceiver {
     // Router addresses
     IUniswapV2Router public uniswapRouter;
     IUniswapV2Router public sushiSwapRouter;
-    I1inchAggregationRouterV4 public oneInchRouter;
-    IBalancerVault public balancerVault;
-    IPancakeRouter public pancakeSwapRouter;
+    IUniswapV2Router public oneInchRouter;
+    IUniswapV2Router public balancerRouter;
+    IUniswapV2Router public pancakeSwapRouter;
     ICowSwap public cowSwapRouter;
 
     // Bridge addresses
-    IWormholeBridge public wormholeBridge;
-    ISynapseBridge public jumperBridge;
-    IStargateRouter public stargateBridge;
-    IDeBridgeGate public debridgeBridge;
-    IBungeeBridge public bungeeBridge;
+    ICommonBridge public wormholeBridge;
+    ICommonBridge public jumperBridge;
+    ICommonBridge public stargateBridge;
+    ICommonBridge public debridgeBridge;
+    ICommonBridge public bungeeBridge;
 
-    IAaveV3LendingPool public lendingPool;
+    ILendingPoolAddressesProvider public provider;
+    ILendingPool public lendingPool;
 
     // Constructor to initialize all the router and bridge addresses
     constructor(
         address _uniswapRouter,
         address _sushiSwapRouter,
         address _oneInchRouter,
-        address _balancerVault,
+        address _balancerRouter,
         address _pancakeSwapRouter,
         address _cowSwapRouter,
         address _wormholeBridge,
@@ -50,22 +42,23 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
         address _stargateBridge,
         address _debridgeBridge,
         address _bungeeBridge,
-        address _lendingPool
+        address _provider
     ) {
         uniswapRouter = IUniswapV2Router(_uniswapRouter);
         sushiSwapRouter = IUniswapV2Router(_sushiSwapRouter);
-        oneInchRouter = I1inchAggregationRouterV4(_oneInchRouter);
-        balancerVault = IBalancerVault(_balancerVault);
-        pancakeSwapRouter = IPancakeRouter(_pancakeSwapRouter);
+        oneInchRouter = IUniswapV2Router(_oneInchRouter);
+        balancerRouter = IUniswapV2Router(_balancerRouter);
+        pancakeSwapRouter = IUniswapV2Router(_pancakeSwapRouter);
         cowSwapRouter = ICowSwap(_cowSwapRouter);
 
-        wormholeBridge = IWormholeBridge(_wormholeBridge);
-        jumperBridge = ISynapseBridge(_jumperBridge);
-        stargateBridge = IStargateRouter(_stargateBridge);
-        debridgeBridge = IDeBridgeGate(_debridgeBridge);
-        bungeeBridge = IBungeeBridge(_bungeeBridge);
+        wormholeBridge = ICommonBridge(_wormholeBridge);
+        jumperBridge = ICommonBridge(_jumperBridge);
+        stargateBridge = ICommonBridge(_stargateBridge);
+        debridgeBridge = ICommonBridge(_debridgeBridge);
+        bungeeBridge = ICommonBridge(_bungeeBridge);
 
-        lendingPool = IAaveV3LendingPool(_lendingPool);
+        provider = ILendingPoolAddressesProvider(_provider);
+        lendingPool = ILendingPool(provider.getLendingPool());
     }
 
     // Function to swap tokens on the specified DEX
@@ -96,44 +89,23 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
                     block.timestamp
                 );
         } else if (dexRouter == address(oneInchRouter)) {
-            I1inchAggregationRouterV4.SwapDescription
-                memory desc = I1inchAggregationRouterV4.SwapDescription({
-                    srcToken: path[0],
-                    dstToken: path[path.length - 1],
-                    srcReceiver: payable(address(this)),
-                    dstReceiver: payable(address(this)),
-                    amount: amountIn,
-                    minReturnAmount: amountOutMin,
-                    flags: 0,
-                    permit: ""
-                });
-
-            oneInchRouter.swap(address(this), desc, "");
-        } else if (dexRouter == address(balancerVault)) {
-            IBalancerVault.SingleSwap memory singleSwap = IBalancerVault
-                .SingleSwap({
-                    poolId: keccak256(abi.encodePacked(path)),
-                    kind: IBalancerVault.SwapKind.GIVEN_IN,
-                    assetIn: path[0],
-                    assetOut: path[path.length - 1],
-                    amount: amountIn,
-                    userData: ""
-                });
-
-            IBalancerVault.FundManagement memory funds = IBalancerVault
-                .FundManagement({
-                    sender: address(this),
-                    fromInternalBalance: false,
-                    recipient: payable(address(this)),
-                    toInternalBalance: false
-                });
-
-            balancerVault.swap(
-                singleSwap,
-                funds,
-                amountOutMin,
-                block.timestamp
-            );
+            return
+                oneInchRouter.swapExactTokensForTokens(
+                    amountIn,
+                    amountOutMin,
+                    path,
+                    address(this),
+                    block.timestamp
+                );
+        } else if (dexRouter == address(balancerRouter)) {
+            return
+                balancerRouter.swapExactTokensForTokens(
+                    amountIn,
+                    amountOutMin,
+                    path,
+                    address(this),
+                    block.timestamp
+                );
         } else if (dexRouter == address(pancakeSwapRouter)) {
             return
                 pancakeSwapRouter.swapExactTokensForTokens(
@@ -163,53 +135,21 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
         address token,
         uint256 amount,
         address bridge,
-        uint256 destinationChainId,
+        string calldata destinationChain,
         address recipient
     ) internal {
         IERC20(token).approve(bridge, amount);
 
         if (bridge == address(wormholeBridge)) {
-            wormholeBridge.transferTokens(
-                token,
-                amount,
-                uint16(destinationChainId),
-                bytes32(uint256(uint160(recipient))),
-                0,
-                0
-            );
+            wormholeBridge.transfer(token, amount, destinationChain, recipient);
         } else if (bridge == address(jumperBridge)) {
-            jumperBridge.deposit(token, amount, destinationChainId, recipient);
+            jumperBridge.transfer(token, amount, destinationChain, recipient);
         } else if (bridge == address(stargateBridge)) {
-            IStargateRouter.lzTxObj memory lzTxParams = IStargateRouter
-                .lzTxObj({
-                    dstGasForCall: 0,
-                    dstNativeAmount: 0,
-                    dstNativeAddr: abi.encode(recipient)
-                });
-            stargateBridge.swap{value: msg.value}(
-                uint16(destinationChainId),
-                1,
-                1,
-                payable(address(this)),
-                amount,
-                amount,
-                lzTxParams,
-                abi.encodePacked(recipient),
-                ""
-            );
+            stargateBridge.transfer(token, amount, destinationChain, recipient);
         } else if (bridge == address(debridgeBridge)) {
-            debridgeBridge.send{value: msg.value}(
-                token,
-                amount,
-                destinationChainId,
-                abi.encodePacked(recipient),
-                "",
-                true,
-                0,
-                ""
-            );
+            debridgeBridge.transfer(token, amount, destinationChain, recipient);
         } else if (bridge == address(bungeeBridge)) {
-            bungeeBridge.deposit(token, amount, destinationChainId, recipient);
+            bungeeBridge.transfer(token, amount, destinationChain, recipient);
         } else {
             revert("Unknown bridge");
         }
@@ -222,7 +162,7 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
         uint amountOutMin,
         address dexRouter,
         address bridge,
-        uint256 destinationChainId,
+        string calldata destinationChain,
         address recipient
     ) internal {
         if (dexRouter == address(cowSwapRouter)) {
@@ -243,7 +183,7 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
                 path[path.length - 1],
                 amountIn,
                 bridge,
-                destinationChainId,
+                destinationChain,
                 recipient
             );
         }
@@ -257,7 +197,7 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
         uint amountOutMin,
         address dexRouter,
         address bridge,
-        uint256 destinationChainId,
+        string calldata destinationChain,
         address recipient
     ) external onlyOwner {
         uint256[] memory modes = new uint256[](assets.length);
@@ -270,7 +210,7 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
             amountOutMin,
             dexRouter,
             bridge,
-            destinationChainId,
+            destinationChain,
             recipient
         );
 
@@ -303,11 +243,11 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
             uint amountOutMin,
             address dexRouter,
             address bridge,
-            uint256 destinationChainId,
+            string memory destinationChain,
             address recipient
         ) = abi.decode(
                 params,
-                (address[], uint, address, address, uint256, address)
+                (address[], uint, address, address, string, address)
             );
 
         // Execute arbitrage logic
@@ -317,7 +257,7 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
             amountOutMin,
             dexRouter,
             bridge,
-            destinationChainId,
+            destinationChain,
             recipient
         );
 
