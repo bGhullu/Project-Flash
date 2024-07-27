@@ -217,66 +217,31 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
 
     // Function to execute an arbitrage trade, possibly involving cross-chain transfer
     function executeArbitrage(
-        address[] calldata path,
-        uint amountIn,
-        uint amountOutMin,
-        address dexRouter,
-        address bridge,
-        uint256 destinationChainId,
-        address recipient
-    ) internal {
-        if (dexRouter == address(cowSwapRouter)) {
-            swapOnCowSwap(
-                path[0],
-                path[path.length - 1],
-                amountIn,
-                amountOutMin
-            );
-        } else {
-            // Swap tokens on the specified DEX
-            swapOnDex(path, amountIn, amountOutMin, dexRouter);
-        }
-
-        // If bridge is specified, bridge the tokens to another chain
-        if (bridge != address(0)) {
-            bridgeTokens(
-                path[path.length - 1],
-                amountIn,
-                bridge,
-                destinationChainId,
-                recipient
-            );
-        }
-    }
-
-    // Function to initiate a flash loan from Aave
-    function initiateFlashloan(
-        address[] calldata assets,
+        address[] calldata tokens,
         uint256[] calldata amounts,
-        address[] calldata path,
-        uint amountOutMin,
-        address dexRouter,
-        address bridge,
+        address[] calldata dexes,
+        address[] calldata bridges,
         uint256 destinationChainId,
         address recipient
     ) external onlyOwner {
-        uint256[] memory modes = new uint256[](assets.length);
-        for (uint256 i = 0; i < assets.length; i++) {
+        // Initiate flashloan
+        uint256[] memory modes = new uint256[](tokens.length);
+        for (uint256 i = 0; i < tokens.length; i++) {
             modes[i] = 0; // 0 means no debt (flashloan)
         }
 
         bytes memory params = abi.encode(
-            path,
-            amountOutMin,
-            dexRouter,
-            bridge,
+            tokens,
+            amounts,
+            dexes,
+            bridges,
             destinationChainId,
             recipient
         );
 
         lendingPool.flashLoan(
             address(this),
-            assets,
+            tokens,
             amounts,
             modes,
             address(this),
@@ -299,24 +264,23 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
         );
 
         (
-            address[] memory path,
-            uint amountOutMin,
-            address dexRouter,
-            address bridge,
+            address[] memory tokens,
+            uint256[] memory amounts,
+            address[] memory dexes,
+            address[] memory bridges,
             uint256 destinationChainId,
             address recipient
         ) = abi.decode(
                 params,
-                (address[], uint, address, address, uint256, address)
+                (address[], uint256[], address[], address[], uint256, address)
             );
 
         // Execute arbitrage logic
-        executeArbitrage(
-            path,
-            amounts[0],
-            amountOutMin,
-            dexRouter,
-            bridge,
+        executeArbitrageInternal(
+            tokens,
+            amounts,
+            dexes,
+            bridges,
             destinationChainId,
             recipient
         );
@@ -328,5 +292,50 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
         }
 
         return true;
+    }
+
+    // Internal function to execute arbitrage logic
+    function executeArbitrageInternal(
+        address[] memory tokens,
+        uint256[] memory amounts,
+        address[] memory dexes,
+        address[] memory bridges,
+        uint256 destinationChainId,
+        address recipient
+    ) internal {
+        uint numDexes = dexes.length;
+        uint numBridges = bridges.length;
+        uint amountIn;
+        uint amountOutMin;
+
+        for (uint i = 0; i < numDexes; i++) {
+            if (i == 0) {
+                amountIn = amounts[0];
+                amountOutMin = amounts[1]; // assuming amounts[1] is the minimum output for the first swap
+            } else {
+                amountIn = IERC20(tokens[i - 1]).balanceOf(address(this)); // amount from the previous swap
+                amountOutMin = amounts[i + 1]; // next amountOutMin
+            }
+
+            if (dexes[i] == address(cowSwapRouter)) {
+                swapOnCowSwap(tokens[i], tokens[i + 1], amountIn, amountOutMin);
+            } else {
+                address[] memory path = new address[](2);
+                path[0] = tokens[i];
+                path[1] = tokens[i + 1];
+                swapOnDex(path, amountIn, amountOutMin, dexes[i]);
+            }
+
+            // If there are bridges, handle bridging
+            if (i < numBridges && bridges[i] != address(0)) {
+                bridgeTokens(
+                    tokens[i + 1],
+                    amountIn,
+                    bridges[i],
+                    destinationChainId,
+                    recipient
+                );
+            }
+        }
     }
 }
