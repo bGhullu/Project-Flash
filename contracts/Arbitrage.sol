@@ -3,9 +3,9 @@ pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
-import "@aave/protocol-v2/contracts/interfaces/IFlashLoanReceiver.sol";
-import "@aave/protocol-v2/contracts/protocol/lendingpool/interfaces/ILendingPoolAddressesProvider.sol";
-import "@aave/protocol-v2/contracts/protocol/lendingpool/interfaces/ILendingPool.sol";
+import "@aave/protocol-v2/contracts/flashloan/interfaces/IFlashLoanReceiver.sol";
+import "@aave/protocol-v2/contracts/interfaces/ILendingPoolAddressesProvider.sol";
+import "@aave/protocol-v2/contracts/interfaces/ILendingPool.sol";
 
 // Interface imports
 import "../interfaces/advancedFlashLoan.sol";
@@ -21,7 +21,6 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
 
     // Bridge addresses
     ICommonBridge public wormholeBridge;
-    ICommonBridge public chainlinkBridge;
     ICommonBridge public jumperBridge;
     ICommonBridge public stargateBridge;
     ICommonBridge public debridgeBridge;
@@ -39,7 +38,6 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
         address _pancakeSwapRouter,
         address _cowSwapRouter,
         address _wormholeBridge,
-        address _chainlinkBridge,
         address _jumperBridge,
         address _stargateBridge,
         address _debridgeBridge,
@@ -54,7 +52,6 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
         cowSwapRouter = ICowSwap(_cowSwapRouter);
 
         wormholeBridge = ICommonBridge(_wormholeBridge);
-        chainlinkBridge = ICommonBridge(_chainlinkBridge);
         jumperBridge = ICommonBridge(_jumperBridge);
         stargateBridge = ICommonBridge(_stargateBridge);
         debridgeBridge = ICommonBridge(_debridgeBridge);
@@ -145,13 +142,6 @@ contract Arbitrage is Ownable, IFlashLoanReceiver {
 
         if (bridge == address(wormholeBridge)) {
             wormholeBridge.transfer(token, amount, destinationChain, recipient);
-        } else if (bridge == address(chainlinkBridge)) {
-            chainlinkBridge.transfer(
-                token,
-                amount,
-                destinationChain,
-                recipient
-            );
         } else if (bridge == address(jumperBridge)) {
             jumperBridge.transfer(token, amount, destinationChain, recipient);
         } else if (bridge == address(stargateBridge)) {
