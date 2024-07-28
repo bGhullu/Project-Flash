@@ -347,6 +347,59 @@ contract Arbitrage is
         );
     }
 
+    // Implement the Synapse receive function (example)
+    function synapseReceive(
+        address from,
+        uint256 amount,
+        uint256 chainId,
+        address token,
+        bytes calldata data
+    ) external {
+        require(
+            msg.sender == address(bridgeAddresses[block.chainid].jumperBridge),
+            "Invalid sender"
+        );
+        handlePayload(data);
+    }
+
+    // Implement the Stargate receive function (example)
+    function stargateReceive(
+        uint16 _srcChainId,
+        bytes memory _srcAddress,
+        uint256 _nonce,
+        bytes memory _payload
+    ) external {
+        require(
+            msg.sender ==
+                address(bridgeAddresses[block.chainid].stargateBridge),
+            "Invalid sender"
+        );
+        handlePayload(_payload);
+    }
+
+    // Common function to handle the payload
+    function handlePayload(bytes memory _payload) internal {
+        (
+            address[] memory tokens,
+            uint256[] memory amounts,
+            address[] memory dexes,
+            address[] memory bridges,
+            uint256 destinationChainId,
+            address recipient
+        ) = abi.decode(
+                _payload,
+                (address[], uint256[], address[], address[], uint256, address)
+            );
+        executeArbitrageInternal(
+            tokens,
+            amounts,
+            dexes,
+            bridges,
+            destinationChainId,
+            recipient
+        );
+    }
+
     function executeArbitrage(
         address[] calldata tokens,
         uint256[] calldata amounts,
