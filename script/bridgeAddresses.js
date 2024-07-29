@@ -45,3 +45,5 @@ const bridgeAddresses = {
         // Add other chains as needed
     }
 };
+
+module.exports = {bridgeAddresses};
