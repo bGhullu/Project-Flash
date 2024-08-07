@@ -1,70 +1,265 @@
 // SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
 
-pragma solidity ^0.8.22;
+import "@openzeppelin/contracts/access/Ownable.sol";
+import "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
+import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "hardhat/console.sol";
 
-import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { OApp, MessagingFee, Origin } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OApp.sol";
-import { MessagingReceipt } from "@layerzerolabs/lz-evm-oapp-v2/contracts/oapp/OAppSender.sol";
+contract ArbitrageBot is Ownable, OApp {
+    using ECDSA for bytes32;
 
-contract MyOApp is OApp {
-    constructor(address _endpoint, address _delegate) OApp(_endpoint, _delegate) Ownable(_delegate) {}
+    event PeersSet(uint16 chainId, bytes32 arbitrageContract);
+    event CrossChainSync(uint16 originalChainId, bytes32 syncId, string status);
+    event Debug(string message);
+    event DebugAddress(string message, address addr);
+    event DebugBytes(string message, bytes data);
+    event DebugUint(string message, uint value);
+    event DebugBytes32(string message, bytes32 data);
 
-    string public data = "Nothing received yet.";
-
-    /**
-     * @notice Sends a message from the source chain to a destination chain.
-     * @param _dstEid The endpoint ID of the destination chain.
-     * @param _message The message string to be sent.
-     * @param _options Additional options for message execution.
-     * @dev Encodes the message as bytes and sends it using the `_lzSend` internal function.
-     * @return receipt A `MessagingReceipt` struct containing details of the message sent.
-     */
-    function send(
-        uint32 _dstEid,
-        string memory _message,
-        bytes calldata _options
-    ) external payable returns (MessagingReceipt memory receipt) {
-        bytes memory _payload = abi.encode(_message);
-        receipt = _lzSend(_dstEid, _payload, _options, MessagingFee(msg.value, 0), payable(msg.sender));
+    struct ArbitrageParams {
+        address[] tokens;
+        uint256[] amounts;
+        address[] dexes;
+        address[] bridges;
+        uint16[] chainIds;
+        address recipient;
+        uint256 nonce;
+        bytes signature;
     }
 
-    /**
-     * @notice Quotes the gas needed to pay for the full omnichain transaction in native gas or ZRO token.
-     * @param _dstEid Destination chain's endpoint ID.
-     * @param _message The message.
-     * @param _options Message execution options (e.g., for sending gas to destination).
-     * @param _payInLzToken Whether to return fee in ZRO token.
-     * @return fee A `MessagingFee` struct containing the calculated gas fee in either the native token or ZRO token.
-     */
-    function quote(
-        uint32 _dstEid,
-        string memory _message,
-        bytes memory _options,
-        bool _payInLzToken
-    ) public view returns (MessagingFee memory fee) {
-        bytes memory payload = abi.encode(_message);
-        fee = _quote(_dstEid, payload, _options, _payInLzToken);
+    ArbitrageParams public arbParams;
+
+    constructor(
+        address _endpoint
+    ) OApp(_endpoint, msg.sender) Ownable(msg.sender) {
+        emit Debug("Constructor started");
+        require(_endpoint != address(0), "Invalid endpoint address");
+        emit DebugAddress("Endpoint Address", _endpoint);
+        emit DebugAddress("Owner Address", msg.sender);
+        emit Debug("Constructor finished");
     }
 
-    /**
-     * @dev Internal function override to handle incoming messages from another chain.
-     * @dev _origin A struct containing information about the message sender.
-     * @dev _guid A unique global packet identifier for the message.
-     * @param payload The encoded message payload being received.
-     *
-     * @dev The following params are unused in the current implementation of the OApp.
-     * @dev _executor The address of the Executor responsible for processing the message.
-     * @dev _extraData Arbitrary data appended by the Executor to the message.
-     *
-     * Decodes the received payload and processes it as per the business logic defined in the function.
-     */
+    function setChainToArbitrageContract(
+        uint16 chainId,
+        address arbitrageContract
+    ) external onlyOwner {
+        peers[chainId] = addressToBytes32(arbitrageContract);
+        emit PeersSet(chainId, addressToBytes32(arbitrageContract));
+    }
+
+    function executeCrossChainArbitrage(
+        address[] memory tokens,
+        uint256[] memory amounts,
+        address[] memory dexes,
+        address[] memory bridges,
+        uint16[] memory chainIds,
+        address recipient,
+        uint256 nonce,
+        bytes memory signature
+    ) external payable onlyOwner {
+        arbParams = ArbitrageParams(
+            tokens,
+            amounts,
+            dexes,
+            bridges,
+            chainIds,
+            recipient,
+            nonce,
+            signature
+        );
+
+        bytes32 messageHash = getMessageHash(
+            tokens,
+            amounts,
+            dexes,
+            bridges,
+            chainIds,
+            recipient,
+            nonce
+        );
+        console.log("Message Hash");
+        console.logBytes32(messageHash);
+
+        bytes32 ethSignedMessageHash = getEthSignedMessageHash(messageHash);
+        console.log("Ethereum Signed Message Hash");
+        console.logBytes32(ethSignedMessageHash);
+
+        address recoveredSigner = ECDSA.recover(
+            ethSignedMessageHash,
+            signature
+        );
+        console.log("Recovered Signer", recoveredSigner);
+        console.log("Expected Signer", owner());
+
+        require(recoveredSigner == owner(), "Invalid Signature");
+
+        bytes memory payload = abi.encode(
+            tokens,
+            amounts,
+            dexes,
+            bridges,
+            chainIds,
+            recipient,
+            nonce,
+            signature
+        );
+        bytes memory options = abi.encode(uint16(1), uint256(200000));
+
+        uint nativeFee = msg.value;
+        uint lzTokenFee = 0; // Adjust this if necessary
+
+        MessagingFee memory fee = MessagingFee({
+            nativeFee: nativeFee,
+            lzTokenFee: lzTokenFee
+        });
+
+        emit Debug("Executing _lzSend with payload");
+        emit DebugUint("Native Fee", nativeFee);
+        emit DebugUint("LZ Token Fee", lzTokenFee);
+
+        _lzSend(chainIds[0], payload, options, fee, payable(msg.sender));
+    }
+
+    function addressToBytes32(address addr) public pure returns (bytes32) {
+        return bytes32(uint256(uint160(addr)));
+    }
+
+    function getMessageHash(
+        address[] memory tokens,
+        uint256[] memory amounts,
+        address[] memory dexes,
+        address[] memory bridges,
+        uint16[] memory chainIds,
+        address recipient,
+        uint256 nonce
+    ) public pure returns (bytes32) {
+        return
+            keccak256(
+                abi.encodePacked(
+                    tokens,
+                    amounts,
+                    dexes,
+                    bridges,
+                    chainIds,
+                    recipient,
+                    nonce
+                )
+            );
+    }
+
+    function getEthSignedMessageHash(
+        bytes32 messageHash
+    ) public pure returns (bytes32) {
+        return
+            keccak256(
+                abi.encodePacked(
+                    "\x19Ethereum Signed Message:\n32",
+                    messageHash
+                )
+            );
+    }
+
+    function verifySignature(
+        address[] memory tokens,
+        uint256[] memory amounts,
+        address[] memory dexes,
+        address[] memory bridges,
+        uint16[] memory chainIds,
+        address recipient,
+        uint256 nonce,
+        bytes memory signature
+    ) public view returns (bool) {
+        bytes32 messageHash = getMessageHash(
+            tokens,
+            amounts,
+            dexes,
+            bridges,
+            chainIds,
+            recipient,
+            nonce
+        );
+        bytes32 ethSignedMessageHash = getEthSignedMessageHash(messageHash);
+
+        address recoveredSigner = ECDSA.recover(
+            ethSignedMessageHash,
+            signature
+        );
+        return recoveredSigner == owner();
+    }
+
     function _lzReceive(
-        Origin calldata /*_origin*/,
-        bytes32 /*_guid*/,
+        Origin calldata _origin,
+        bytes32 _guid,
         bytes calldata payload,
-        address /*_executor*/,
-        bytes calldata /*_extraData*/
+        address _executor,
+        bytes calldata _extraData
     ) internal override {
-        data = abi.decode(payload, (string));
+        (string memory messageType, bytes memory messageData) = abi.decode(
+            payload,
+            (string, bytes)
+        );
+        if (keccak256(bytes(messageType)) == keccak256("ARBITRAGE")) {
+            (
+                address[] memory tokens,
+                uint256[] memory amounts,
+                address[] memory dexes,
+                address[] memory bridges,
+                uint16[] memory chainIds,
+                address recipient,
+                uint256 nonce,
+                bytes memory signature
+            ) = abi.decode(
+                    messageData,
+                    (
+                        address[],
+                        uint256[],
+                        address[],
+                        address[],
+                        uint16[],
+                        address,
+                        uint256,
+                        bytes
+                    )
+                );
+            arbParams = ArbitrageParams(
+                tokens,
+                amounts,
+                dexes,
+                bridges,
+                chainIds,
+                recipient,
+                nonce,
+                signature
+            );
+
+            bytes memory newPayload = abi.encode(
+                tokens,
+                amounts,
+                dexes,
+                bridges,
+                chainIds,
+                recipient,
+                nonce,
+                signature
+            );
+            bytes memory options = abi.encode(uint16(1), uint256(200000));
+            MessagingFee memory fee = MessagingFee({
+                nativeFee: 0,
+                lzTokenFee: 0
+            });
+
+            emit Debug("Executing _lzSend with newPayload");
+
+            _lzSend(chainIds[1], newPayload, options, fee, payable(msg.sender));
+        } else if (keccak256(bytes(messageType)) == keccak256("SYNC")) {
+            (uint16 originalChainId, bytes32 syncId, string memory status) = abi
+                .decode(messageData, (uint16, bytes32, string));
+            emit CrossChainSync(originalChainId, syncId, status);
+        }
+    }
+
+    function getArbParams() external view returns (ArbitrageParams memory) {
+        return arbParams;
     }
 }
